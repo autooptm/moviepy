@@ -1,8 +1,10 @@
 """Implements all the functions to read a video or a picture using ffmpeg."""
 
 import os
+import queue as _queue
 import re
 import subprocess as sp
+import threading as _th
 import warnings
 from typing import List
 
@@ -15,6 +17,54 @@ from moviepy.tools import (
     ffmpeg_escape_filename,
 )
 from moviepy.video.io.errors import VideoCorruptedError
+
+
+class _FrameFeed:
+
+    __slots__ = ("proc", "nbytes", "queue", "thread")
+
+    def __init__(self, proc, nbytes, depth=3):
+        self.proc = proc
+        self.nbytes = nbytes
+        self.queue = _queue.Queue(maxsize=depth)
+        self.thread = _th.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        stdout = self.proc.stdout
+        try:
+            while True:
+                buf = stdout.read(self.nbytes)
+                self.queue.put(buf)
+                if not buf or len(buf) != self.nbytes:
+                    return
+        except (ValueError, OSError):
+            try:
+                self.queue.put(b"")
+            except Exception:
+                pass
+
+    def read(self):
+        return self.queue.get()
+
+    def stop(self):
+        try:
+            while True:
+                self.queue.get_nowait()
+        except Exception:
+            pass
+
+
+class _DecSlot:
+
+    __slots__ = ("proc", "pos", "last_read", "pump", "stamp")
+
+    def __init__(self):
+        self.proc = None
+        self.pos = 0
+        self.last_read = None
+        self.pump = None
+        self.stamp = 0
 
 
 class FFMPEG_VideoReader:
@@ -80,6 +130,12 @@ class FFMPEG_VideoReader:
             bufsize = self.depth * w * h + 100
 
         self.bufsize = bufsize
+        self._decs = [_DecSlot()]
+        self._active = 0
+        self._clock = 0
+        self._in_init = False
+        self._max_dec = max(1, int(os.getenv("MOVIEPY_OPT_1", "4")))
+        self._opt_2 = os.getenv("MOVIEPY_OPT_2", "1") != "0"
         self.initialize()
 
     def initialize(self, start_time=0):
@@ -137,6 +193,19 @@ class FFMPEG_VideoReader:
             elif codec_name == "vp8":
                 i_arg = ["-c:v", "libvpx"] + i_arg
 
+        native_w, native_h = self.infos.get("video_size", self.size)
+        if self.rotation in [90, 270]:
+            native_w, native_h = native_h, native_w
+        if (int(native_w), int(native_h)) == (int(self.size[0]), int(self.size[1])):
+            scale_arg = []
+        else:
+            scale_arg = [
+                "-vf",
+                "scale=%d:%d" % tuple(self.size),
+                "-sws_flags",
+                self.resize_algo,
+            ]
+
         cmd = (
             [FFMPEG_BINARY]
             + i_arg
@@ -145,10 +214,9 @@ class FFMPEG_VideoReader:
                 "error",
                 "-f",
                 "image2pipe",
-                "-vf",
-                "scale=%d:%d" % tuple(self.size),
-                "-sws_flags",
-                self.resize_algo,
+            ]
+            + scale_arg
+            + [
                 "-pix_fmt",
                 self.pixel_format,
                 "-vcodec",
@@ -166,15 +234,25 @@ class FFMPEG_VideoReader:
             }
         )
         self.proc = sp.Popen(cmd, **popen_params)
+        stream = self._decs[self._active]
+        stream.proc = self.proc
+        if self._opt_2:
+            w, h = self.size
+            stream.pump = _FrameFeed(self.proc, self.depth * w * h)
         self.last_read = self.read_frame()
+
+    def _read_bytes(self, nbytes):
+        stream = self._decs[self._active]
+        if stream.pump is not None and stream.proc is self.proc:
+            return stream.pump.read()
+        return self.proc.stdout.read(nbytes)
 
     def skip_frames(self, n=1):
         """Reads and throws away n frames"""
         w, h = self.size
+        nbytes = self.depth * w * h
         for i in range(n):
-            self.proc.stdout.read(self.depth * w * h)
-
-            # self.proc.stdout.flush()
+            self._read_bytes(nbytes)
         self.pos += n
 
     def read_frame(self):
@@ -186,7 +264,7 @@ class FFMPEG_VideoReader:
         w, h = self.size
         nbytes = self.depth * w * h
 
-        s = self.proc.stdout.read(nbytes)
+        s = self._read_bytes(nbytes)
 
         if len(s) != nbytes:
             warnings.warn(
@@ -252,16 +330,64 @@ class FFMPEG_VideoReader:
             return self.last_read
 
         if pos == self.pos:
+            self._touch()
             return self.last_read
-        elif (pos < self.pos) or (pos > self.pos + 100):
-            # We can't just skip forward to `pos` or it would take too long
-            self.initialize(t)
-            return self.last_read
-        else:
+        elif (self.pos < pos) and (pos <= self.pos + 100):
             # If pos == self.pos + 1, this line has no effect
             self.skip_frames(pos - self.pos - 1)
+            self._touch()
             result = self.read_frame()
             return result
+
+        self._save_active()
+        for i, stream in enumerate(self._decs):
+            if i == self._active or stream.proc is None:
+                continue
+            if stream.pos <= pos <= stream.pos + 100:
+                self._activate(i)
+                if pos == self.pos:
+                    return self.last_read
+                self.skip_frames(pos - self.pos - 1)
+                return self.read_frame()
+
+        idx = next(
+            (i for i, s in enumerate(self._decs) if s.proc is None), None
+        )
+        if idx is None and len(self._decs) < self._max_dec:
+            self._decs.append(_DecSlot())
+            idx = len(self._decs) - 1
+        if idx is None:
+            idx = min(
+                range(len(self._decs)), key=lambda i: self._decs[i].stamp
+            )
+        self._activate(idx)
+        self._in_init = True
+        try:
+            self.initialize(t)
+        finally:
+            self._in_init = False
+        self._touch()
+        return self.last_read
+
+    def _touch(self):
+        self._clock += 1
+        self._decs[self._active].stamp = self._clock
+
+    def _save_active(self):
+        stream = self._decs[self._active]
+        stream.proc = self.proc
+        stream.pos = self.pos
+        stream.last_read = getattr(self, "last_read", None)
+
+    def _activate(self, index):
+        self._save_active()
+        stream = self._decs[index]
+        self.proc = stream.proc
+        self.pos = stream.pos
+        if stream.last_read is not None:
+            self.last_read = stream.last_read
+        self._active = index
+        self._touch()
 
     @property
     def lastread(self):
@@ -278,6 +404,28 @@ class FFMPEG_VideoReader:
 
     def close(self, delete_lastread=True):
         """Closes the reader terminating the process, if is still open."""
+        streams = getattr(self, "_decs", None) or []
+        active_i = getattr(self, "_active", 0)
+        if not getattr(self, "_in_init", False):
+            for i, stream in enumerate(streams):
+                if i == active_i or stream.proc is None:
+                    continue
+                proc, stream.proc = stream.proc, None
+                if stream.pump is not None:
+                    stream.pump.stop()
+                    stream.pump = None
+                try:
+                    if proc.poll() is None:
+                        proc.terminate()
+                        proc.stdout.close()
+                        proc.stderr.close()
+                        proc.wait()
+                except OSError:
+                    pass
+        active = streams[active_i] if active_i < len(streams) else None
+        if active is not None and active.pump is not None:
+            active.pump.stop()
+            active.pump = None
         if self.proc:
             if self.proc.poll() is None:
                 self.proc.terminate()

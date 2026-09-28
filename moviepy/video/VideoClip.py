@@ -63,7 +63,6 @@ class VideoClip(Clip):
       to True
 
 
-
     Attributes
     ----------
 
@@ -718,7 +717,11 @@ class VideoClip(Clip):
         return post_array
 
     def compose_on(
-        self, background: np.ndarray, t, background_mask: Union[np.ndarray, None] = None
+        self,
+        background: np.ndarray,
+        t,
+        background_mask: Union[np.ndarray, None] = None,
+        background_is_owned: bool = False,
     ) -> Tuple[np.ndarray, Union[np.ndarray, None]]:
         """Returns the result of the clip's frame at time `t` on top
         on the given `picture`, the position of the clip being given
@@ -755,7 +758,9 @@ class VideoClip(Clip):
         ct = t - self.start  # clip time
 
         # GET IMAGE AND MASK IF ANY
-        clip_frame = self.get_frame(ct).astype("uint8")
+        clip_frame = self.get_frame(ct)
+        if clip_frame.dtype != np.uint8:
+            clip_frame = clip_frame.astype("uint8")
         background_height, background_width = background.shape[:2]
         clip_height, clip_width = clip_frame.shape[:2]
         clip_mask = None
@@ -809,11 +814,12 @@ class VideoClip(Clip):
         if clip_mask is not None and np.min(clip_mask) == 1:
             clip_mask = None
 
-        # Copy the background to avoid modifying the original
-        bg_copy = background.copy()
+        bg_copy = background if background_is_owned else background.copy()
 
         if background_mask is not None:
-            bg_mask_copy = background_mask.copy()
+            bg_mask_copy = (
+                background_mask if background_is_owned else background_mask.copy()
+            )
 
         # If neither background nor clip have a mask, we can just paste clip on top
         if background_mask is None and clip_mask is None:

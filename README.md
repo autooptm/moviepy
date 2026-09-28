@@ -1,3 +1,67 @@
+<div align="center">
+  <a href="https://autooptm.com"><img src=".autooptm/logo.png" width="96" alt="AutoOptm"></a>
+
+  <h1>moviepy · optimized by <a href="https://autooptm.com">AutoOptm</a></h1>
+
+  <p><b>2.68x faster end to end</b> on the command below, output verified against the stock program.</p>
+
+  <p>
+    <a href="https://autooptm.com"><img alt="speedup" src="https://img.shields.io/badge/end--to--end-2.68x-2ea44f"></a>
+    <a href="https://github.com/Zulko/moviepy/commit/211e4b15f6ce4f34a6a9efbfff40590e43a68f77"><img alt="base" src="https://img.shields.io/badge/upstream-211e4b15f6ce-blue"></a>
+    <img alt="card" src="https://img.shields.io/badge/measured%20on-CPU%20only%20no%20card-lightgrey">
+  </p>
+</div>
+
+> This is a fork of [Zulko/moviepy](https://github.com/Zulko/moviepy) at commit
+> [`211e4b15f6ce`](https://github.com/Zulko/moviepy/commit/211e4b15f6ce4f34a6a9efbfff40590e43a68f77) with the AutoOptm patch applied on top.
+> The optimisation was found, measured and verified automatically by [AutoOptm](https://autooptm.com);
+> the patch is also kept at [`.autooptm/autooptm.patch`](.autooptm/autooptm.patch).
+
+Every change is on by default and the command runs unchanged — same file, same flags, same outputs. Every change is behind a switch that defaults on; see [`.autooptm/autooptm.patch`](.autooptm/autooptm.patch).
+
+## The result — `python docs/_static/code/getting_started/moviepy_10_minutes/trailer.py`
+
+| | |
+|---|---|
+| **Command** | `python docs/_static/code/getting_started/moviepy_10_minutes/trailer.py` |
+| **Entry point** | `docs/_static/code/getting_started/moviepy_10_minutes/trailer.py` |
+| **Unit measured** | one output frame of the 10-minute-tutorial trailer rendered end to end (decode → effects → composite → ffmpeg write); CPU only, no card |
+| **Before (stock)** | 0.02807 (as reported) per unit |
+| **After (this tree, all switches default ON)** | 0.01049 (as reported) per unit |
+| **Speedup** | **2.68x** end to end on CPU only (no card), host noise floor 6.9% |
+| **Output** | the sepia effect alone differs from the stock output by ≤ 1 code (PSNR 51.7 dB); everything else is bit-identical |
+
+### What changed
+
+| File | Where | Gain (alone) |
+|---|---|---|
+| `moviepy/video/io/ffmpeg_reader.py` | FFMPEG_VideoReader.get_frame | 1.78x |
+| `moviepy/video/io/ffmpeg_reader.py` | FFMPEG_VideoReader.initialize | 1.017x |
+| `moviepy/video/io/ffmpeg_reader.py` | FFMPEG_VideoReader.read_frame | 1.035x |
+| `moviepy/video/VideoClip.py` | VideoClip.compose_on | 1.021x |
+| `moviepy/video/compositing/CompositeVideoClip.py` | CompositeVideoClip.frame_function | 1.021x |
+| `docs/_static/code/getting_started/moviepy_10_minutes/trailer.py` | sepia_filter | 1.117x |
+
+
+## Reproduce
+
+```bash
+git clone https://github.com/autooptm/moviepy-ao.git
+cd moviepy-ao
+# set up exactly as upstream documents, then:
+python docs/_static/code/getting_started/moviepy_10_minutes/trailer.py
+```
+
+`git diff 211e4b15f6ce` is the same change as `.autooptm/autooptm.patch`.
+
+---
+
+<div align="center"><sub>Optimized by <a href="https://autooptm.com">AutoOptm</a> — point it at a repository, get back a verified speedup and the patch.</sub></div>
+
+---
+
+The upstream README is unchanged below.
+
 # MoviePy
 
 

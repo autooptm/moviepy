@@ -1,7 +1,12 @@
 # Lets import moviepy, lets also import numpy we will use it a some point
+import os
+
 import numpy as np
 
 from moviepy import *
+
+import os as _ao_os
+_AO_PREVIEW = bool(_ao_os.environ.get("MOVIEPY_PREVIEW"))
 
 
 #################
@@ -32,11 +37,11 @@ rambo_clip = video.subclipped("04:41.5", "04:44.70")
 # Now, lets have a first look at our clips
 # Warning: you need ffplay installed for preview to work
 # We set a low fps so our machine can render in real time without slowing down
-intro_clip.preview(fps=20)
-bird_clip.preview(fps=20)
-bunny_clip.preview(fps=20)
-rodents_clip.preview(fps=20)
-rambo_clip.preview(fps=20)
+if _AO_PREVIEW: intro_clip.preview(fps=20)
+if _AO_PREVIEW: bird_clip.preview(fps=20)
+if _AO_PREVIEW: bunny_clip.preview(fps=20)
+if _AO_PREVIEW: rodents_clip.preview(fps=20)
+if _AO_PREVIEW: rambo_clip.preview(fps=20)
 
 
 ##############################
@@ -52,7 +57,7 @@ rodents_clip = rodents_clip.with_section_cut_out(start_time=4, end_time=10)
 # meaning it does not modify the original data, but instead copy it and modify/return the copy
 
 # Lets check the result
-rodents_clip.preview(fps=10)
+if _AO_PREVIEW: rodents_clip.preview(fps=10)
 
 ############################
 # TEXT/LOGO CLIPS CREATION #
@@ -134,7 +139,7 @@ quick_compo = CompositeVideoClip(
         moviepy_clip,
     ]
 )
-quick_compo.preview(fps=10)
+if _AO_PREVIEW: quick_compo.preview(fps=10)
 
 
 ######################
@@ -172,7 +177,7 @@ quick_compo = CompositeVideoClip(
         moviepy_clip,
     ]
 )
-quick_compo.preview(fps=10)
+if _AO_PREVIEW: quick_compo.preview(fps=10)
 
 
 ################################
@@ -252,7 +257,7 @@ quick_comp = CompositeVideoClip(
         moviepy_clip,
     ]
 )
-quick_comp.preview(fps=10)
+if _AO_PREVIEW: quick_comp.preview(fps=10)
 
 
 ###############
@@ -275,6 +280,14 @@ def sepia_filter(frame: np.ndarray):
         [[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]]
     )
 
+    if not os.environ.get("MOVIEPY_OPT_3"):
+        try:
+            import cv2
+
+            return cv2.transform(frame, sepia_matrix.astype(np.float32))
+        except ImportError:
+            pass
+
     # Convert the image to float32 format for matrix multiplication
     frame = frame.astype(np.float32)
 
@@ -296,7 +309,7 @@ def sepia_filter(frame: np.ndarray):
 rambo_clip = rambo_clip.image_transform(sepia_filter)
 
 # Let's see how our filter look
-rambo_clip.preview(fps=10)
+if _AO_PREVIEW: rambo_clip.preview(fps=10)
 
 
 ##################

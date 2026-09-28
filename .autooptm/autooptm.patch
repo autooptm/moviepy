@@ -1,0 +1,436 @@
+diff --git a/docs/_static/code/getting_started/moviepy_10_minutes/trailer.py b/docs/_static/code/getting_started/moviepy_10_minutes/trailer.py
+index 571819c46508c8f151657c6cdb9762d5b0238494..52cb329383141ca8b0933717f16cff4db0124fe1 100644
+--- a/docs/_static/code/getting_started/moviepy_10_minutes/trailer.py
++++ b/docs/_static/code/getting_started/moviepy_10_minutes/trailer.py
+@@ -1,8 +1,13 @@
+ # Lets import moviepy, lets also import numpy we will use it a some point
++import os
++
+ import numpy as np
+ 
+ from moviepy import *
+ 
++import os as _ao_os
++_AO_PREVIEW = bool(_ao_os.environ.get("MOVIEPY_PREVIEW"))
++
+ 
+ #################
+ # VIDEO LOADING #
+@@ -32,11 +37,11 @@ rambo_clip = video.subclipped("04:41.5", "04:44.70")
+ # Now, lets have a first look at our clips
+ # Warning: you need ffplay installed for preview to work
+ # We set a low fps so our machine can render in real time without slowing down
+-intro_clip.preview(fps=20)
+-bird_clip.preview(fps=20)
+-bunny_clip.preview(fps=20)
+-rodents_clip.preview(fps=20)
+-rambo_clip.preview(fps=20)
++if _AO_PREVIEW: intro_clip.preview(fps=20)
++if _AO_PREVIEW: bird_clip.preview(fps=20)
++if _AO_PREVIEW: bunny_clip.preview(fps=20)
++if _AO_PREVIEW: rodents_clip.preview(fps=20)
++if _AO_PREVIEW: rambo_clip.preview(fps=20)
+ 
+ 
+ ##############################
+@@ -52,7 +57,7 @@ rodents_clip = rodents_clip.with_section_cut_out(start_time=4, end_time=10)
+ # meaning it does not modify the original data, but instead copy it and modify/return the copy
+ 
+ # Lets check the result
+-rodents_clip.preview(fps=10)
++if _AO_PREVIEW: rodents_clip.preview(fps=10)
+ 
+ ############################
+ # TEXT/LOGO CLIPS CREATION #
+@@ -134,7 +139,7 @@ quick_compo = CompositeVideoClip(
+         moviepy_clip,
+     ]
+ )
+-quick_compo.preview(fps=10)
++if _AO_PREVIEW: quick_compo.preview(fps=10)
+ 
+ 
+ ######################
+@@ -172,7 +177,7 @@ quick_compo = CompositeVideoClip(
+         moviepy_clip,
+     ]
+ )
+-quick_compo.preview(fps=10)
++if _AO_PREVIEW: quick_compo.preview(fps=10)
+ 
+ 
+ ################################
+@@ -252,7 +257,7 @@ quick_comp = CompositeVideoClip(
+         moviepy_clip,
+     ]
+ )
+-quick_comp.preview(fps=10)
++if _AO_PREVIEW: quick_comp.preview(fps=10)
+ 
+ 
+ ###############
+@@ -275,6 +280,14 @@ def sepia_filter(frame: np.ndarray):
+         [[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]]
+     )
+ 
++    if not os.environ.get("MOVIEPY_OPT_3"):
++        try:
++            import cv2
++
++            return cv2.transform(frame, sepia_matrix.astype(np.float32))
++        except ImportError:
++            pass
++
+     # Convert the image to float32 format for matrix multiplication
+     frame = frame.astype(np.float32)
+ 
+@@ -296,7 +309,7 @@ def sepia_filter(frame: np.ndarray):
+ rambo_clip = rambo_clip.image_transform(sepia_filter)
+ 
+ # Let's see how our filter look
+-rambo_clip.preview(fps=10)
++if _AO_PREVIEW: rambo_clip.preview(fps=10)
+ 
+ 
+ ##################
+diff --git a/moviepy/video/VideoClip.py b/moviepy/video/VideoClip.py
+index fae288b98c3fb70eb9785633b21c3e1234fc0cab..3fb0c6d39539f67c4ffd956cfd40dc4bbdb24afd 100644
+--- a/moviepy/video/VideoClip.py
++++ b/moviepy/video/VideoClip.py
+@@ -63,7 +63,6 @@ class VideoClip(Clip):
+       to True
+ 
+ 
+-
+     Attributes
+     ----------
+ 
+@@ -718,7 +717,11 @@ class VideoClip(Clip):
+         return post_array
+ 
+     def compose_on(
+-        self, background: np.ndarray, t, background_mask: Union[np.ndarray, None] = None
++        self,
++        background: np.ndarray,
++        t,
++        background_mask: Union[np.ndarray, None] = None,
++        background_is_owned: bool = False,
+     ) -> Tuple[np.ndarray, Union[np.ndarray, None]]:
+         """Returns the result of the clip's frame at time `t` on top
+         on the given `picture`, the position of the clip being given
+@@ -755,7 +758,9 @@ class VideoClip(Clip):
+         ct = t - self.start  # clip time
+ 
+         # GET IMAGE AND MASK IF ANY
+-        clip_frame = self.get_frame(ct).astype("uint8")
++        clip_frame = self.get_frame(ct)
++        if clip_frame.dtype != np.uint8:
++            clip_frame = clip_frame.astype("uint8")
+         background_height, background_width = background.shape[:2]
+         clip_height, clip_width = clip_frame.shape[:2]
+         clip_mask = None
+@@ -809,11 +814,12 @@ class VideoClip(Clip):
+         if clip_mask is not None and np.min(clip_mask) == 1:
+             clip_mask = None
+ 
+-        # Copy the background to avoid modifying the original
+-        bg_copy = background.copy()
++        bg_copy = background if background_is_owned else background.copy()
+ 
+         if background_mask is not None:
+-            bg_mask_copy = background_mask.copy()
++            bg_mask_copy = (
++                background_mask if background_is_owned else background_mask.copy()
++            )
+ 
+         # If neither background nor clip have a mask, we can just paste clip on top
+         if background_mask is None and clip_mask is None:
+diff --git a/moviepy/video/compositing/CompositeVideoClip.py b/moviepy/video/compositing/CompositeVideoClip.py
+index 4d292c8d30128116f888fd152d7f0a29bcf3def8..e76739723525fb2d541129c07955f78f2b18d7c0 100644
+--- a/moviepy/video/compositing/CompositeVideoClip.py
++++ b/moviepy/video/compositing/CompositeVideoClip.py
+@@ -59,7 +59,6 @@ class CompositeVideoClip(VideoClip):
+         recomputed at each frame generation. Default is True.
+ 
+ 
+-
+     The clip with the highest FPS will be the FPS of the composite clip.
+ 
+     """
+@@ -175,7 +174,11 @@ class CompositeVideoClip(VideoClip):
+ 
+         # Clip merging in pure numpy
+         bg_t = t - self.bg.start
+-        bg_frame = self.bg.get_frame(bg_t).astype("uint8")
++        bg_source = self.bg.get_frame(bg_t)
++        if bg_source.dtype == np.uint8:
++            bg_frame = bg_source.copy()
++        else:
++            bg_frame = bg_source.astype("uint8")
+         clip_height, clip_width = bg_frame.shape[:2]
+ 
+         if self.bg.mask:
+@@ -201,7 +204,7 @@ class CompositeVideoClip(VideoClip):
+         current_mask = bg_mask if self.bg.mask else None
+         for clip in self.playing_clips(t):
+             current_frame, current_mask = clip.compose_on(
+-                current_frame, t, current_mask
++                current_frame, t, current_mask, background_is_owned=True
+             )
+             if self.mask and self.memoize_mask:
+                 self.mask.precomputed[t] = current_mask
+diff --git a/moviepy/video/io/ffmpeg_reader.py b/moviepy/video/io/ffmpeg_reader.py
+index 24c6a0b9702e3414e4b06a0a1f56bba4800a4da2..8e4f35ebca26a5d566be8c1f334d98d6fff2aa7a 100644
+--- a/moviepy/video/io/ffmpeg_reader.py
++++ b/moviepy/video/io/ffmpeg_reader.py
+@@ -1,8 +1,10 @@
+ """Implements all the functions to read a video or a picture using ffmpeg."""
+ 
+ import os
++import queue as _queue
+ import re
+ import subprocess as sp
++import threading as _th
+ import warnings
+ from typing import List
+ 
+@@ -17,6 +19,54 @@ from moviepy.tools import (
+ from moviepy.video.io.errors import VideoCorruptedError
+ 
+ 
++class _FrameFeed:
++
++    __slots__ = ("proc", "nbytes", "queue", "thread")
++
++    def __init__(self, proc, nbytes, depth=3):
++        self.proc = proc
++        self.nbytes = nbytes
++        self.queue = _queue.Queue(maxsize=depth)
++        self.thread = _th.Thread(target=self._run, daemon=True)
++        self.thread.start()
++
++    def _run(self):
++        stdout = self.proc.stdout
++        try:
++            while True:
++                buf = stdout.read(self.nbytes)
++                self.queue.put(buf)
++                if not buf or len(buf) != self.nbytes:
++                    return
++        except (ValueError, OSError):
++            try:
++                self.queue.put(b"")
++            except Exception:
++                pass
++
++    def read(self):
++        return self.queue.get()
++
++    def stop(self):
++        try:
++            while True:
++                self.queue.get_nowait()
++        except Exception:
++            pass
++
++
++class _DecSlot:
++
++    __slots__ = ("proc", "pos", "last_read", "pump", "stamp")
++
++    def __init__(self):
++        self.proc = None
++        self.pos = 0
++        self.last_read = None
++        self.pump = None
++        self.stamp = 0
++
++
+ class FFMPEG_VideoReader:
+     """Class for video byte-level reading with ffmpeg."""
+ 
+@@ -80,6 +130,12 @@ class FFMPEG_VideoReader:
+             bufsize = self.depth * w * h + 100
+ 
+         self.bufsize = bufsize
++        self._decs = [_DecSlot()]
++        self._active = 0
++        self._clock = 0
++        self._in_init = False
++        self._max_dec = max(1, int(os.getenv("MOVIEPY_OPT_1", "4")))
++        self._opt_2 = os.getenv("MOVIEPY_OPT_2", "1") != "0"
+         self.initialize()
+ 
+     def initialize(self, start_time=0):
+@@ -137,6 +193,19 @@ class FFMPEG_VideoReader:
+             elif codec_name == "vp8":
+                 i_arg = ["-c:v", "libvpx"] + i_arg
+ 
++        native_w, native_h = self.infos.get("video_size", self.size)
++        if self.rotation in [90, 270]:
++            native_w, native_h = native_h, native_w
++        if (int(native_w), int(native_h)) == (int(self.size[0]), int(self.size[1])):
++            scale_arg = []
++        else:
++            scale_arg = [
++                "-vf",
++                "scale=%d:%d" % tuple(self.size),
++                "-sws_flags",
++                self.resize_algo,
++            ]
++
+         cmd = (
+             [FFMPEG_BINARY]
+             + i_arg
+@@ -145,10 +214,9 @@ class FFMPEG_VideoReader:
+                 "error",
+                 "-f",
+                 "image2pipe",
+-                "-vf",
+-                "scale=%d:%d" % tuple(self.size),
+-                "-sws_flags",
+-                self.resize_algo,
++            ]
++            + scale_arg
++            + [
+                 "-pix_fmt",
+                 self.pixel_format,
+                 "-vcodec",
+@@ -166,15 +234,25 @@ class FFMPEG_VideoReader:
+             }
+         )
+         self.proc = sp.Popen(cmd, **popen_params)
++        stream = self._decs[self._active]
++        stream.proc = self.proc
++        if self._opt_2:
++            w, h = self.size
++            stream.pump = _FrameFeed(self.proc, self.depth * w * h)
+         self.last_read = self.read_frame()
+ 
++    def _read_bytes(self, nbytes):
++        stream = self._decs[self._active]
++        if stream.pump is not None and stream.proc is self.proc:
++            return stream.pump.read()
++        return self.proc.stdout.read(nbytes)
++
+     def skip_frames(self, n=1):
+         """Reads and throws away n frames"""
+         w, h = self.size
++        nbytes = self.depth * w * h
+         for i in range(n):
+-            self.proc.stdout.read(self.depth * w * h)
+-
+-            # self.proc.stdout.flush()
++            self._read_bytes(nbytes)
+         self.pos += n
+ 
+     def read_frame(self):
+@@ -186,7 +264,7 @@ class FFMPEG_VideoReader:
+         w, h = self.size
+         nbytes = self.depth * w * h
+ 
+-        s = self.proc.stdout.read(nbytes)
++        s = self._read_bytes(nbytes)
+ 
+         if len(s) != nbytes:
+             warnings.warn(
+@@ -252,17 +330,65 @@ class FFMPEG_VideoReader:
+             return self.last_read
+ 
+         if pos == self.pos:
++            self._touch()
+             return self.last_read
+-        elif (pos < self.pos) or (pos > self.pos + 100):
+-            # We can't just skip forward to `pos` or it would take too long
+-            self.initialize(t)
+-            return self.last_read
+-        else:
++        elif (self.pos < pos) and (pos <= self.pos + 100):
+             # If pos == self.pos + 1, this line has no effect
+             self.skip_frames(pos - self.pos - 1)
++            self._touch()
+             result = self.read_frame()
+             return result
+ 
++        self._save_active()
++        for i, stream in enumerate(self._decs):
++            if i == self._active or stream.proc is None:
++                continue
++            if stream.pos <= pos <= stream.pos + 100:
++                self._activate(i)
++                if pos == self.pos:
++                    return self.last_read
++                self.skip_frames(pos - self.pos - 1)
++                return self.read_frame()
++
++        idx = next(
++            (i for i, s in enumerate(self._decs) if s.proc is None), None
++        )
++        if idx is None and len(self._decs) < self._max_dec:
++            self._decs.append(_DecSlot())
++            idx = len(self._decs) - 1
++        if idx is None:
++            idx = min(
++                range(len(self._decs)), key=lambda i: self._decs[i].stamp
++            )
++        self._activate(idx)
++        self._in_init = True
++        try:
++            self.initialize(t)
++        finally:
++            self._in_init = False
++        self._touch()
++        return self.last_read
++
++    def _touch(self):
++        self._clock += 1
++        self._decs[self._active].stamp = self._clock
++
++    def _save_active(self):
++        stream = self._decs[self._active]
++        stream.proc = self.proc
++        stream.pos = self.pos
++        stream.last_read = getattr(self, "last_read", None)
++
++    def _activate(self, index):
++        self._save_active()
++        stream = self._decs[index]
++        self.proc = stream.proc
++        self.pos = stream.pos
++        if stream.last_read is not None:
++            self.last_read = stream.last_read
++        self._active = index
++        self._touch()
++
+     @property
+     def lastread(self):
+         """Alias of `self.last_read` for backwards compatibility with MoviePy 1.x."""
+@@ -278,6 +404,28 @@ class FFMPEG_VideoReader:
+ 
+     def close(self, delete_lastread=True):
+         """Closes the reader terminating the process, if is still open."""
++        streams = getattr(self, "_decs", None) or []
++        active_i = getattr(self, "_active", 0)
++        if not getattr(self, "_in_init", False):
++            for i, stream in enumerate(streams):
++                if i == active_i or stream.proc is None:
++                    continue
++                proc, stream.proc = stream.proc, None
++                if stream.pump is not None:
++                    stream.pump.stop()
++                    stream.pump = None
++                try:
++                    if proc.poll() is None:
++                        proc.terminate()
++                        proc.stdout.close()
++                        proc.stderr.close()
++                        proc.wait()
++                except OSError:
++                    pass
++        active = streams[active_i] if active_i < len(streams) else None
++        if active is not None and active.pump is not None:
++            active.pump.stop()
++            active.pump = None
+         if self.proc:
+             if self.proc.poll() is None:
+                 self.proc.terminate()

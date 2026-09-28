@@ -59,7 +59,6 @@ class CompositeVideoClip(VideoClip):
         recomputed at each frame generation. Default is True.
 
 
-
     The clip with the highest FPS will be the FPS of the composite clip.
 
     """
@@ -175,7 +174,11 @@ class CompositeVideoClip(VideoClip):
 
         # Clip merging in pure numpy
         bg_t = t - self.bg.start
-        bg_frame = self.bg.get_frame(bg_t).astype("uint8")
+        bg_source = self.bg.get_frame(bg_t)
+        if bg_source.dtype == np.uint8:
+            bg_frame = bg_source.copy()
+        else:
+            bg_frame = bg_source.astype("uint8")
         clip_height, clip_width = bg_frame.shape[:2]
 
         if self.bg.mask:
@@ -201,7 +204,7 @@ class CompositeVideoClip(VideoClip):
         current_mask = bg_mask if self.bg.mask else None
         for clip in self.playing_clips(t):
             current_frame, current_mask = clip.compose_on(
-                current_frame, t, current_mask
+                current_frame, t, current_mask, background_is_owned=True
             )
             if self.mask and self.memoize_mask:
                 self.mask.precomputed[t] = current_mask
